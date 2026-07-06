@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ADK local session database and state
+.adk/
+**/.adk/
+
+# ADK deployment temporary artifacts
+*_tmp[0-9]*
+**/orchestrator_tmp*
+
