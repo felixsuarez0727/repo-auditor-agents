@@ -14,29 +14,29 @@ It generates a single, consolidated Markdown audit report covering:
 
 ```mermaid
 graph TD
-    User([User / API Client]) -->|1. Sends repo_url| API[FastAPI Service: api/main.py]
-    User -->|Sends Query| WebUI[ADK Web Playground]
+    User(["User / API Client"]) -->|1. Sends repo_url| API["FastAPI Service (api/main.py)"]
+    User -->|Sends Query| WebUI["ADK Web Playground"]
     
-    subgraph ADK Framework (Memory-based Runner)
-        API -->|2. Invokes runner.run_async| Runner[InMemoryRunner]
+    subgraph ADK["ADK Framework (Memory-based Runner)"]
+        API -->|2. Invokes runner.run_async| Runner["InMemoryRunner"]
         WebUI -->|Invokes| Runner
-        Runner -->|3. Coordinates| Orch[Orchestrator Agent: agents/orchestrator/agent.py]
+        Runner -->|3. Coordinates| Orch["Orchestrator Agent (agent.py)"]
     end
 
-    subgraph Custom MCP Server
-        Orch -->|4. Requests Metadata & Code| MCP[github_mcp.py FastMCP]
-        MCP -->|5. HTTP Requests| GitHubAPI[GitHub REST API]
+    subgraph MCP_SG["Custom MCP Server"]
+        Orch -->|4. Requests Metadata & Code| MCP["github_mcp.py (FastMCP)"]
+        MCP -->|5. HTTP Requests| GitHubAPI["GitHub REST API"]
     end
     
-    subgraph Domain Audit Tools
-        Orch -->|6. Scans secrets & versions| Tool1[scan_code_for_secrets]
-        Orch -->|7. Queries versions| Tool2[get_latest_pypi_version]
-        Orch -->|8. Audits public docstrings| Tool3[analyze_missing_docstrings]
-        Orch -->|9. Inspects functions for testing| Tool4[get_public_functions_ast]
+    subgraph Tools["Domain Audit Tools"]
+        Orch -->|6. Scans secrets & versions| Tool1["scan_code_for_secrets"]
+        Orch -->|7. Queries versions| Tool2["get_latest_pypi_version"]
+        Orch -->|8. Audits public docstrings| Tool3["analyze_missing_docstrings"]
+        Orch -->|9. Inspects functions for testing| Tool4["get_public_functions_ast"]
     end
     
-    Orch -->|10. Compiles final output| Report[Markdown Audit Report]
-    Report -->|11. Sanitizes credentials| Sanitize[DLP Sanitization Filter]
+    Orch -->|10. Compiles final output| Report["Markdown Audit Report"]
+    Report -->|11. Sanitizes credentials| Sanitize["DLP Sanitization Filter"]
     Sanitize -->|12. JSON Response| User
 ```
 
