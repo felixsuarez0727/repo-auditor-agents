@@ -4,6 +4,7 @@ import ast
 import httpx
 from dotenv import load_dotenv
 from google.adk import Agent
+from google.adk.tools import ToolContext
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +30,24 @@ def get_headers():
 # In-memory cache to store file contents and avoid redundant network requests
 _file_cache = {}
 
-async def _fetch_file_content(owner: str, repo: str, path: str) -> str:
+def _validate_and_check(owner: str, repo: str, path: str = "", tool_context: ToolContext = None):
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", owner) or not re.match(r"^[a-zA-Z0-9_\-\.]+$", repo):
+        raise ValueError("Invalid owner or repo name")
+    if path:
+        if path.startswith("/"):
+            raise ValueError("Path cannot start with '/'")
+        if ".." in path.split("/"):
+            raise ValueError("Path cannot contain '..' segments")
+    if tool_context and hasattr(tool_context, "state"):
+        target = f"{owner}/{repo}"
+        current = tool_context.state.get("active_repo")
+        if not current:
+            tool_context.state["active_repo"] = target
+        elif current != target:
+            raise ValueError(f"Session locked to repository {current}, cannot access {target}")
+
+async def _fetch_file_content(owner: str, repo: str, path: str, tool_context: ToolContext = None) -> str:
+    _validate_and_check(owner, repo, path, tool_context)
     key = f"{owner}/{repo}/{path}"
     if key in _file_cache:
         return _file_cache[key]
@@ -48,7 +66,7 @@ async def _fetch_file_content(owner: str, repo: str, path: str) -> str:
 
 # --- Core Repository Tools ---
 
-async def get_repo_metadata(owner: str, repo: str) -> dict:
+async def get_repo_metadata(owner: str, repo: str, tool_context: ToolContext = None) -> dict:
     """
     Retrieves basic repository metadata (name, description, main language, stars, forks).
     
@@ -56,6 +74,10 @@ async def get_repo_metadata(owner: str, repo: str) -> dict:
         owner: The owner of the repository.
         repo: The name of the repository.
     """
+    try:
+        _validate_and_check(owner, repo, "", tool_context)
+    except Exception as e:
+        return {"error": str(e)}
     url = f"{GITHUB_API_URL}/repos/{owner}/{repo}"
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=get_headers())
@@ -72,7 +94,7 @@ async def get_repo_metadata(owner: str, repo: str) -> dict:
             "default_branch": data.get("default_branch")
         }
 
-async def list_repo_files(owner: str, repo: str, path: str = "") -> list:
+async def list_repo_files(owner: str, repo: str, path: str = "", tool_context: ToolContext = None) -> list:
     """
     Lists files and directories in the repository at the specified path.
     
@@ -81,6 +103,7 @@ async def list_repo_files(owner: str, repo: str, path: str = "") -> list:
         repo: The name of the repository.
         path: The path within the repository (leave empty for root).
     """
+    _validate_and_check(owner, repo, path, tool_context)
     url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=get_headers())
@@ -101,7 +124,7 @@ async def list_repo_files(owner: str, repo: str, path: str = "") -> list:
             })
         return result
 
-async def read_file_content(owner: str, repo: str, path: str) -> str:
+async def read_file_content(owner: str, repo: str, path: str, tool_context: ToolContext = None) -> str:
     """
     Reads and returns the content of a specific file in the repository (and caches it).
     
@@ -110,11 +133,11 @@ async def read_file_content(owner: str, repo: str, path: str) -> str:
         repo: The name of the repository.
         path: The path to the file.
     """
-    return await _fetch_file_content(owner, repo, path)
+    return await _fetch_file_content(owner, repo, path, tool_context)
 
 # --- Analysis Tools (Refactored to accept owner, repo, path parameters to avoid giant payloads) ---
 
-async def scan_code_for_secrets(owner: str, repo: str, path: str) -> list:
+async def scan_code_for_secrets(owner: str, repo: str, path: str, tool_context: ToolContext = None) -> list:
     """
     Scans a Python or requirements.txt file in the repository for secrets (AWS keys, GitHub tokens, passwords).
     
@@ -123,7 +146,7 @@ async def scan_code_for_secrets(owner: str, repo: str, path: str) -> list:
         repo: The name of the repository.
         path: The path to the file to scan.
     """
-    code = await _fetch_file_content(owner, repo, path)
+    code = await _fetch_file_content(owner, repo, path, tool_context)
     
     patterns = {
         "AWS API Key": r"(?:AKIA|ASCA|AAAA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
@@ -187,7 +210,7 @@ async def get_latest_pypi_version(package_name: str) -> dict:
             "message": str(e)
         }
 
-async def analyze_missing_docstrings(owner: str, repo: str, path: str) -> list:
+async def analyze_missing_docstrings(owner: str, repo: str, path: str, tool_context: ToolContext = None) -> list:
     """
     Parses a Python file in the repository to locate public classes and functions lacking docstrings.
     
@@ -196,7 +219,7 @@ async def analyze_missing_docstrings(owner: str, repo: str, path: str) -> list:
         repo: The name of the repository.
         path: The path to the Python file.
     """
-    code = await _fetch_file_content(owner, repo, path)
+    code = await _fetch_file_content(owner, repo, path, tool_context)
     results = []
     try:
         tree = ast.parse(code)
@@ -227,7 +250,7 @@ async def analyze_missing_docstrings(owner: str, repo: str, path: str) -> list:
                     
     return results
 
-async def get_public_functions_ast(owner: str, repo: str, path: str) -> list:
+async def get_public_functions_ast(owner: str, repo: str, path: str, tool_context: ToolContext = None) -> list:
     """
     Extracts public functions and methods from a Python file to locate candidates for unit testing.
     
@@ -236,7 +259,7 @@ async def get_public_functions_ast(owner: str, repo: str, path: str) -> list:
         repo: The name of the repository.
         path: The path to the Python file.
     """
-    code = await _fetch_file_content(owner, repo, path)
+    code = await _fetch_file_content(owner, repo, path, tool_context)
     results = []
     try:
         tree = ast.parse(code)
