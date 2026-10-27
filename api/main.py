@@ -1,10 +1,12 @@
 import os
+import re
+import secrets
 import uuid
 import time
 import traceback
 from collections import defaultdict
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -24,6 +26,7 @@ runner = InMemoryRunner(agent=orchestrator_agent, app_name="orchestrator")
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+AUDIT_API_KEY = os.getenv("AUDIT_API_KEY")
 
 # --- Security Measure 2: Basic In-Memory Rate Limiting ---
 # Store request timestamps per IP address to prevent abuse and API exhaustion.
@@ -73,7 +76,7 @@ def health_check():
     return {"status": "ok"}
 
 @app.post("/audit", response_model=AuditResponse)
-async def audit_repository(request: AuditRequest, fastapi_req: Request):
+async def audit_repository(request: AuditRequest, fastapi_req: Request, x_api_key: str | None = Header(default=None)):
     # --- Security Measure 2: Check Rate Limit ---
     # Retrieve client IP to enforce rate limiting
     client_ip = fastapi_req.client.host if fastapi_req.client else "unknown"
@@ -83,18 +86,26 @@ async def audit_repository(request: AuditRequest, fastapi_req: Request):
             detail="Rate limit exceeded. Maximum 5 requests per minute per IP are allowed."
         )
 
+    # --- Security Measure 0: API key authentication ---
+    if not AUDIT_API_KEY:
+        raise HTTPException(status_code=503, detail="Server API key is not configured.")
+    if not x_api_key or not secrets.compare_digest(x_api_key, AUDIT_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+
     repo_url = request.repo_url.strip()
     if not repo_url:
         raise HTTPException(status_code=400, detail="repo_url field cannot be empty.")
     
     # --- Security Measure 1: Input URL Validation ---
-    # Restrict input to only valid public/private GitHub repository URLs.
+    # Restrict input to GitHub repository URLs (https://github.com/<owner>/<repo>).
     # This prevents SSRF (Server-Side Request Forgery) and invalid tool invocations.
-    if not repo_url.startswith("https://github.com/"):
+    match = re.fullmatch(r"https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?(?:[/?#].*)?", repo_url)
+    if not match:
         raise HTTPException(
             status_code=400,
-            detail="Invalid repository URL. Only URLs starting with 'https://github.com/' are allowed."
+            detail="Invalid repository URL. Use 'https://github.com/<owner>/<repo>'."
         )
+    repo_url = f"https://github.com/{match[1]}/{match[2]}"
     
     # Generate unique session ID for isolation on concurrent requests
     session_id = str(uuid.uuid4())

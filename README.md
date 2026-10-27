@@ -76,9 +76,10 @@ Create a `.env` file in the **root** of the project and in the **agent's directo
 ```env
 GOOGLE_API_KEY=your_gemini_api_key_here
 GITHUB_TOKEN=your_github_personal_access_token_here
+AUDIT_API_KEY=a_long_random_secret_for_api_clients
 ```
 
-*Note: The `GITHUB_TOKEN` is required to communicate with the GitHub API. The `GOOGLE_API_KEY` is utilized locally to execute the Gemini model.*
+*Note: The `GITHUB_TOKEN` is required to communicate with the GitHub API. Use a fine-grained, read-only token limited to the repositories this deployment should audit: the agent can read anything the token can read. `AUDIT_API_KEY` is required by `POST /audit`; without it the API rejects every request. The `GOOGLE_API_KEY` is utilized locally to execute the Gemini model.*
 
 ---
 
@@ -108,6 +109,7 @@ Send a request containing the target GitHub URL:
 ```bash
 curl -X POST http://localhost:8080/audit \
      -H 'Content-Type: application/json' \
+     -H 'X-API-Key: <your AUDIT_API_KEY>' \
      -d '{"repo_url": "https://github.com/octocat/Hello-World"}'
 ```
 
@@ -117,14 +119,17 @@ curl -X POST http://localhost:8080/audit \
 
 The FastAPI wrapper in [api/main.py](api/main.py) incorporates the following security controls:
 
+*   **Measure 0: API Key Authentication**
+    *   **File:** [api/main.py](api/main.py#L89-L93) (Lines 89-93)
+    *   **Explanation:** `POST /audit` requires the `X-API-Key` header to match `AUDIT_API_KEY`. Requests without a valid key are rejected, and the API refuses all requests if no key is configured.
 *   **Measure 1: GitHub URL Validation (SSRF Protection)**
-    *   **File:** [api/main.py](api/main.py#L90-L97) (Lines 90-97)
-    *   **Explanation:** Validates that inputs strictly start with `https://github.com/` to block local or malicious server-side request forgery attempts.
+    *   **File:** [api/main.py](api/main.py#L99-L108) (Lines 99-108)
+    *   **Explanation:** Accepts only `https://github.com/<owner>/<repo>` URLs (extra path parts such as `/tree/main` are ignored) and passes only that clean URL to the agent.
 *   **Measure 2: IP-Based Rate Limiting (DoS Protection)**
-    *   **File:** [api/main.py](api/main.py#L28-L42) (Lines 28-42) and [api/main.py](api/main.py#L77-L84) (Lines 77-84)
+    *   **File:** [api/main.py](api/main.py#L31-L45) (Lines 31-45) and [api/main.py](api/main.py#L80-L87) (Lines 80-87)
     *   **Explanation:** Restricts abusive request bursts to a maximum of 5 requests per minute per client IP address.
 *   **Measure 3: Secret Sanitization and DLP (Data Leak Prevention)**
-    *   **File:** [api/main.py](api/main.py#L45-L60) (Lines 45-60) and [api/main.py](api/main.py#L145-L146) (Lines 145-146)
+    *   **File:** [api/main.py](api/main.py#L48-L63) (Lines 48-63) and [api/main.py](api/main.py#L156-L157) (Lines 156-157)
     *   **Explanation:** Redacts the GitHub access token and Gemini API key from the output in case the model accidentally exposes them.
 
 ---
